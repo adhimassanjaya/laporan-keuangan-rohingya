@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Wallet, PlusCircle, Trash2, 
-  User, ShieldCheck, LogOut, Loader2, Filter, Calendar, ChevronLeft, ChevronRight, Clock, Users, BarChart2, ShieldAlert, Share2, Check 
+  User, ShieldCheck, LogOut, Loader2, Filter, Calendar, ChevronLeft, ChevronRight, Clock, Users, BarChart2, ShieldAlert, Share2, Check, ChevronDown 
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, push, set, get, remove, child } from 'firebase/database';
@@ -31,7 +31,9 @@ export default function App() {
   const [logs, setLogs] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [copiedWA, setCopiedWA] = useState(false);
+  const [copiedStatus, setCopiedStatus] = useState<string | null>(null);
+  const [showWADropdown, setShowWADropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Filter State
   const [filterJenis, setFilterJenis] = useState('Semua');
@@ -48,6 +50,17 @@ export default function App() {
   const [keterangan, setKeterangan] = useState('');
   const [anggotaLoan, setAnggotaLoan] = useState('Adhi');
   const [aksiLoan, setAksiLoan] = useState('Peminjaman');
+
+  // Tutup dropdown saat klik di luar
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowWADropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Ambil data transaksi dan log dari Firebase Realtime Database saat aplikasi dibuka
   useEffect(() => {
@@ -238,19 +251,54 @@ export default function App() {
 
   const userNetLoan = userLoanPinjam - userLoanKembali;
 
-  // Fungsi untuk menyalin format Laporan WhatsApp
-  const handleCopyWAFunctional = () => {
-    const todayStr = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
-    
-    // Rangkum rekap loan anggota
+  // Generator Teks WhatsApp Berdasarkan Periode dengan Rincian Inbound yang Jelas
+  const handleCopyWAReport = (periodeType: 'Harian' | 'Mingguan' | 'Bulanan') => {
+    const nowWIB = new Date();
+    const formatterDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' });
+    const todayStrWIB = formatterDateStr.format(nowWIB); // YYYY-MM-DD
+    const [currentYear, currentMonth, currentDay] = todayStrWIB.split('-').map(Number);
+
+    // Filter transaksi berdasarkan periode yang dipilih
+    let targetTransactions = transactions;
+    let periodeLabel = "";
+
+    if (periodeType === 'Harian') {
+      targetTransactions = transactions.filter(t => t.tanggal === todayStrWIB);
+      periodeLabel = `Harian (${new Date(currentYear, currentMonth - 1, currentDay).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })})`;
+    } else if (periodeType === 'Mingguan') {
+      const todayObj = new Date(currentYear, currentMonth - 1, currentDay);
+      const sevenDaysAgo = new Date(todayObj.getTime() - (7 * 24 * 60 * 60 * 1000));
+      targetTransactions = transactions.filter(t => {
+        if (!t.tanggal) return false;
+        const [ty, tm, td] = t.tanggal.split('-').map(Number);
+        const tObj = new Date(ty, tm - 1, td);
+        return tObj >= sevenDaysAgo && tObj <= todayObj;
+      });
+      periodeLabel = `Mingguan (7 Hari Terakhir)`;
+    } else if (periodeType === 'Bulanan') {
+      const currentMonthStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+      targetTransactions = transactions.filter(t => t.tanggal && t.tanggal.startsWith(currentMonthStr));
+      const monthName = new Date(currentYear, currentMonth - 1, 1).toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+      periodeLabel = `Bulanan (${monthName})`;
+    }
+
+    // Kalkulasi rincian Inbound per sub-kategori
+    const inboundAtas = targetTransactions.filter(t => t.jenis === 'Inbound' && t.subKategori === 'Atas').reduce((acc, c) => acc + c.jumlah, 0);
+    const inboundBawah = targetTransactions.filter(t => t.jenis === 'Inbound' && t.subKategori === 'Bawah').reduce((acc, c) => acc + c.jumlah, 0);
+    const inboundPallet = targetTransactions.filter(t => t.jenis === 'Inbound' && t.subKategori === 'Pallet').reduce((acc, c) => acc + c.jumlah, 0);
+    const pInboundTotal = inboundAtas + inboundBawah + inboundPallet;
+
+    const pOutbound = targetTransactions.filter(t => t.jenis === 'Outbound').reduce((acc, c) => acc + c.jumlah, 0);
+    const pPengeluaran = targetTransactions.filter(t => t.jenis === 'Pengeluaran').reduce((acc, c) => acc + c.jumlah, 0);
+    const pLoanPinjam = targetTransactions.filter(t => t.jenis === 'Loan' && t.aksiLoan === 'Peminjaman').reduce((acc, c) => acc + c.jumlah, 0);
+    const pLoanKembali = targetTransactions.filter(t => t.jenis === 'Loan' && t.aksiLoan === 'Pengembalian').reduce((acc, c) => acc + c.jumlah, 0);
+    const pNetLoanPeriode = pLoanPinjam - pLoanKembali;
+
+    // Rekap sisa loan anggota
     let loanSummaryText = "";
     ANGGOTA_LIST.forEach(nama => {
-      const pinjam = transactions
-        .filter(t => t.jenis === 'Loan' && t.anggotaLoan === nama && t.aksiLoan === 'Peminjaman')
-        .reduce((acc, curr) => acc + curr.jumlah, 0);
-      const kembali = transactions
-        .filter(t => t.jenis === 'Loan' && t.anggotaLoan === nama && t.aksiLoan === 'Pengembalian')
-        .reduce((acc, curr) => acc + curr.jumlah, 0);
+      const pinjam = transactions.filter(t => t.jenis === 'Loan' && t.anggotaLoan === nama && t.aksiLoan === 'Peminjaman').reduce((acc, c) => acc + c.jumlah, 0);
+      const kembali = transactions.filter(t => t.jenis === 'Loan' && t.anggotaLoan === nama && t.aksiLoan === 'Pengembalian').reduce((acc, c) => acc + c.jumlah, 0);
       const sisa = pinjam - kembali;
       
       if (sisa > 0) {
@@ -261,22 +309,28 @@ export default function App() {
     });
 
     const waText = `📊 *LAPORAN KEUANGAN KELOMPOK ROHINGYA 5.0*
-📅 Per Tanggal: ${todayStr}
+📌 Periode: ${periodeLabel}
 
-💰 *RINGKASAN KAS*
-🔹 Saldo Akhir Kas: *Rp ${saldoUtama.toLocaleString()}*
-📥 Total Inbound (Masuk): Rp ${totalInbound.toLocaleString()}
-📤 Total Outbound (Keluar): Rp ${totalOutbound.toLocaleString()}
-🛒 Total Pengeluaran: Rp ${totalPengeluaran.toLocaleString()}
-🤝 Total Loan Aktif: Rp ${netLoan.toLocaleString()}
+💰 *RINGKASAN POSISI KAS*
+🔹 Saldo Akhir Kas Utama: *Rp ${saldoUtama.toLocaleString()}*
+
+📈 *ARUS DANA PERIODE INI*
+📥 Total Inbound (Masuk): Rp ${pInboundTotal.toLocaleString()}
+  ▫️ Atas: Rp ${inboundAtas.toLocaleString()}
+  ▫️ Bawah: Rp ${inboundBawah.toLocaleString()}
+  ▫️ Pallet: Rp ${inboundPallet.toLocaleString()}
+📤 Keluar (Outbound): Rp ${pOutbound.toLocaleString()}
+🛒 Pengeluaran: Rp ${pPengeluaran.toLocaleString()}
+🤝 Loan Periode Ini: Rp ${pNetLoanPeriode.toLocaleString()}
 
 👥 *REKAP SISA LOAN ANGGOTA*
 ${loanSummaryText}
-_Laporan ini digenerate otomatis oleh Sistem Rohingya 5.0_ 🤖✨`;
+_Laporan otomatis sistem Rohingya 5.0_ 🤖✨`;
 
     navigator.clipboard.writeText(waText).then(() => {
-      setCopiedWA(true);
-      setTimeout(() => setCopiedWA(false), 3000);
+      setCopiedStatus(periodeType);
+      setShowWADropdown(false);
+      setTimeout(() => setCopiedStatus(null), 3000);
     });
   };
 
@@ -376,7 +430,7 @@ _Laporan ini digenerate otomatis oleh Sistem Rohingya 5.0_ 🤖✨`;
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col justify-between">
       <div>
         {/* Header */}
-        <header className="bg-slate-800 border-b border-slate-700 sticky top-0 z-10">
+        <header className="bg-slate-800 border-b border-slate-700 sticky top-0 z-20">
           <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
             <div className="flex items-center space-x-3">
               <div className="bg-emerald-500/10 p-2 rounded-lg text-emerald-400">
@@ -388,16 +442,51 @@ _Laporan ini digenerate otomatis oleh Sistem Rohingya 5.0_ 🤖✨`;
               </div>
             </div>
             <div className="flex items-center space-x-2">
-              <button 
-                onClick={handleCopyWAFunctional}
-                className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition ${
-                  copiedWA ? 'bg-emerald-600 text-white' : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30'
-                }`}
-                title="Salin laporan siap kirim ke WhatsApp"
-              >
-                {copiedWA ? <Check size={16} /> : <Share2 size={16} />}
-                <span className="hidden sm:inline">{copiedWA ? 'Berhasil Disalin!' : 'Salin Laporan WA'}</span>
-              </button>
+              {/* Tombol Dropdown Salin Laporan WA KHUSUS ADMIN */}
+              {isAdmin && (
+                <div className="relative" ref={dropdownRef}>
+                  <button 
+                    onClick={() => setShowWADropdown(!showWADropdown)}
+                    className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition ${
+                      copiedStatus ? 'bg-emerald-600 text-white' : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30'
+                    }`}
+                  >
+                    {copiedStatus ? <Check size={16} /> : <Share2 size={16} />}
+                    <span className="hidden sm:inline">
+                      {copiedStatus ? `Berhasil Disalin (${copiedStatus})!` : 'Salin Laporan WA'}
+                    </span>
+                    <ChevronDown size={14} className={`transition-transform duration-200 ${showWADropdown ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {/* Dropdown Menu Pilihan */}
+                  {showWADropdown && (
+                    <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-xl py-2 z-30 text-xs">
+                      <div className="px-3 py-1.5 text-slate-400 font-semibold uppercase tracking-wider text-[10px] border-b border-slate-700/50 mb-1">
+                        Pilih Periode Laporan
+                      </div>
+                      <button 
+                        onClick={() => handleCopyWAReport('Harian')}
+                        className="w-full text-left px-4 py-2 hover:bg-slate-700 text-slate-200 transition flex items-center justify-between"
+                      >
+                        <span>☀️ Harian (Hari Ini)</span>
+                      </button>
+                      <button 
+                        onClick={() => handleCopyWAReport('Mingguan')}
+                        className="w-full text-left px-4 py-2 hover:bg-slate-700 text-slate-200 transition flex items-center justify-between"
+                      >
+                        <span>📅 Mingguan (7 Hari)</span>
+                      </button>
+                      <button 
+                        onClick={() => handleCopyWAReport('Bulanan')}
+                        className="w-full text-left px-4 py-2 hover:bg-slate-700 text-slate-200 transition flex items-center justify-between"
+                      >
+                        <span>📆 Bulanan (Bulan Ini)</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <button 
                 onClick={handleLogout}
                 className="flex items-center space-x-2 bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-xl text-sm transition"
