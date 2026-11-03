@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Wallet, PlusCircle, Trash2, 
-  User, ShieldCheck, LogOut, Loader2, Filter, Calendar, ChevronLeft, ChevronRight, Clock, Users, BarChart2, ShieldAlert, Share2, Check, ChevronDown 
+  User, ShieldCheck, LogOut, Loader2, Filter, Calendar, ChevronLeft, ChevronRight, Clock, Users, BarChart2, ShieldAlert, Share2, Check, ChevronDown, KeyRound, Lock 
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, push, set, get, remove, child } from 'firebase/database';
+import { getDatabase, ref, push, set, get, remove, child, update } from 'firebase/database';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
 
 // ==========================================
@@ -26,14 +26,21 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('');
   const [usernameInput, setUsernameInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   
   const [transactions, setTransactions] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [userPasswords, setUserPasswords] = useState<{ [key: string]: string }>({});
   const [loadingData, setLoadingData] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [copiedStatus, setCopiedStatus] = useState<string | null>(null);
   const [showWADropdown, setShowWADropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Modal Ganti Password State
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [selectedTargetUser, setSelectedTargetUser] = useState(ANGGOTA_LIST[0]);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
 
   // Filter State
   const [filterJenis, setFilterJenis] = useState('Semua');
@@ -43,7 +50,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
-  // Form State
+  // Form Transaksi State
   const [jenis, setJenis] = useState('Inbound');
   const [subKategori, setSubKategori] = useState('Atas');
   const [jumlah, setJumlah] = useState('');
@@ -62,7 +69,7 @@ export default function App() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Ambil data transaksi dan log dari Firebase Realtime Database saat aplikasi dibuka
+  // Ambil data dari Firebase (Transaksi, Log, dan Password Anggota)
   useEffect(() => {
     async function fetchData() {
       try {
@@ -96,6 +103,12 @@ export default function App() {
           setLogs([]);
         }
 
+        // Ambil Password Anggota dari Firebase
+        const passSnapshot = await get(child(dbRef, 'passwords'));
+        if (passSnapshot.exists()) {
+          setUserPasswords(passSnapshot.val());
+        }
+
       } catch (error) {
         console.error("Gagal memuat data dari database: ", error);
       } finally {
@@ -113,15 +126,19 @@ export default function App() {
     }
 
     const isAdmin = ADMIN_LIST.includes(usernameInput);
-    const reversedName = usernameInput.toLowerCase().split('').reverse().join('');
-    const validPassword = isAdmin ? 'adminrohingya123' : reversedName;
+    
+    // Cek password di database Firebase, fallback ke password default jika belum diset
+    const savedPassword = userPasswords[usernameInput];
+    const defaultPassword = isAdmin ? 'adminrohingya123' : usernameInput.toLowerCase().split('').reverse().join('');
+    const validPassword = savedPassword !== undefined ? savedPassword : defaultPassword;
 
     if (passwordInput === validPassword) {
       setUser(usernameInput);
       localStorage.setItem('rohingya_user', usernameInput);
       setErrorMsg('');
+      setErrorMsg('');
     } else {
-      setErrorMsg(isAdmin ? 'Password Admin salah!' : 'Password salah!');
+      setErrorMsg('Password salah!');
     }
   };
 
@@ -133,6 +150,35 @@ export default function App() {
   };
 
   const isAdmin = user && ADMIN_LIST.includes(user);
+
+  // Fungsi Ubah Password Anggota / Admin ke Firebase
+  const handleSaveNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPasswordInput) {
+      alert("Password baru tidak boleh kosong!");
+      return;
+    }
+
+    // Anggota biasa hanya bisa ganti password sendiri, Admin bisa ganti siapa saja
+    const targetUser = isAdmin ? selectedTargetUser : user;
+    if (!targetUser) return;
+
+    try {
+      const updatedPasswords = { ...userPasswords, [targetUser]: newPasswordInput };
+      await set(ref(db, 'passwords'), updatedPasswords);
+      setUserPasswords(updatedPasswords);
+      
+      setSuccessMsg(`Password untuk ${targetUser} berhasil diperbarui!`);
+      setNewPasswordInput('');
+      setTimeout(() => {
+        setSuccessMsg('');
+        setShowChangePasswordModal(false);
+      }, 2000);
+    } catch (error) {
+      console.error("Gagal menyimpan password: ", error);
+      alert("Gagal memperbarui password ke database.");
+    }
+  };
 
   const handleAddTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -251,14 +297,13 @@ export default function App() {
 
   const userNetLoan = userLoanPinjam - userLoanKembali;
 
-  // Generator Teks WhatsApp Berdasarkan Periode dengan Rincian Inbound yang Jelas
+  // Generator Teks WhatsApp Berdasarkan Periode
   const handleCopyWAReport = (periodeType: 'Harian' | 'Mingguan' | 'Bulanan') => {
     const nowWIB = new Date();
     const formatterDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' });
-    const todayStrWIB = formatterDateStr.format(nowWIB); // YYYY-MM-DD
+    const todayStrWIB = formatterDateStr.format(nowWIB);
     const [currentYear, currentMonth, currentDay] = todayStrWIB.split('-').map(Number);
 
-    // Filter transaksi berdasarkan periode yang dipilih
     let targetTransactions = transactions;
     let periodeLabel = "";
 
@@ -282,7 +327,6 @@ export default function App() {
       periodeLabel = `Bulanan (${monthName})`;
     }
 
-    // Kalkulasi rincian Inbound per sub-kategori
     const inboundAtas = targetTransactions.filter(t => t.jenis === 'Inbound' && t.subKategori === 'Atas').reduce((acc, c) => acc + c.jumlah, 0);
     const inboundBawah = targetTransactions.filter(t => t.jenis === 'Inbound' && t.subKategori === 'Bawah').reduce((acc, c) => acc + c.jumlah, 0);
     const inboundPallet = targetTransactions.filter(t => t.jenis === 'Inbound' && t.subKategori === 'Pallet').reduce((acc, c) => acc + c.jumlah, 0);
@@ -294,7 +338,6 @@ export default function App() {
     const pLoanKembali = targetTransactions.filter(t => t.jenis === 'Loan' && t.aksiLoan === 'Pengembalian').reduce((acc, c) => acc + c.jumlah, 0);
     const pNetLoanPeriode = pLoanPinjam - pLoanKembali;
 
-    // Rekap sisa loan anggota
     let loanSummaryText = "";
     ANGGOTA_LIST.forEach(nama => {
       const pinjam = transactions.filter(t => t.jenis === 'Loan' && t.anggotaLoan === nama && t.aksiLoan === 'Peminjaman').reduce((acc, c) => acc + c.jumlah, 0);
@@ -355,7 +398,7 @@ _Laporan otomatis sistem Rohingya 5.0_ 🤖✨`;
     return matchJenis && matchTanggal;
   });
 
-  // Logika Paginasi (Maksimal 10 per halaman)
+  // Logika Paginasi
   const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage) || 1;
   const startIndex = (currentPage - 1) * itemsPerPage;
   const currentTransactions = filteredTransactions.slice(startIndex, startIndex + itemsPerPage);
@@ -373,7 +416,7 @@ _Laporan otomatis sistem Rohingya 5.0_ 🤖✨`;
               <Wallet size={32} />
             </div>
             <h1 className="text-2xl font-bold text-white">Laporan Keuangan Rohingya 5.0</h1>
-            <p className="text-xs text-slate-400 mt-2">Silakan login untuk mengakses laporan</p>
+            <p className="text-xs text-slate-400 mt-2">Silakan login menggunakan password pribadi Anda</p>
           </div>
 
           {errorMsg && (
@@ -406,7 +449,7 @@ _Laporan otomatis sistem Rohingya 5.0_ 🤖✨`;
                 <ShieldCheck className="absolute left-3 top-3.5 text-slate-400" size={20} />
                 <input 
                   type="password"
-                  placeholder=""
+                  placeholder="Masukkan Password / PIN"
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-emerald-500 text-sm"
@@ -442,6 +485,19 @@ _Laporan otomatis sistem Rohingya 5.0_ 🤖✨`;
               </div>
             </div>
             <div className="flex items-center space-x-2">
+              {/* Tombol Ganti Password */}
+              <button 
+                onClick={() => {
+                  setSelectedTargetUser(isAdmin ? ANGGOTA_LIST[0] : user);
+                  setShowChangePasswordModal(true);
+                }}
+                className="flex items-center space-x-1.5 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl text-xs font-semibold transition"
+                title="Ganti Password Akun"
+              >
+                <KeyRound size={15} />
+                <span className="hidden sm:inline">Ganti Password</span>
+              </button>
+
               {/* Tombol Dropdown Salin Laporan WA KHUSUS ADMIN */}
               {isAdmin && (
                 <div className="relative" ref={dropdownRef}>
@@ -848,6 +904,73 @@ _Laporan otomatis sistem Rohingya 5.0_ 🤖✨`;
           </div>
         </main>
       </div>
+
+      {/* Modal Ganti Password */}
+      {showChangePasswordModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl w-full max-w-sm space-y-4 shadow-2xl">
+            <h3 className="text-lg font-bold text-white flex items-center space-x-2">
+              <Lock size={20} className="text-emerald-400" />
+              <span>Ganti Password Akun</span>
+            </h3>
+
+            {successMsg && (
+              <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs p-3 rounded-xl text-center">
+                {successMsg}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveNewPassword} className="space-y-3">
+              {isAdmin ? (
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Pilih Akun Anggota</label>
+                  <select 
+                    value={selectedTargetUser}
+                    onChange={(e) => setSelectedTargetUser(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 text-white p-2.5 rounded-xl text-sm focus:outline-none focus:border-emerald-500"
+                  >
+                    {ANGGOTA_LIST.map(a => (
+                      <option key={a} value={a}>{a} {ADMIN_LIST.includes(a) ? '(Admin)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">
+                  Mengubah password untuk akun: <span className="text-emerald-400 font-semibold">{user}</span>
+                </p>
+              )}
+
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Password / PIN Baru</label>
+                <input 
+                  type="text"
+                  placeholder="Masukkan password baru..."
+                  value={newPasswordInput}
+                  onChange={(e) => setNewPasswordInput(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 text-white p-2.5 rounded-xl text-sm focus:outline-none focus:border-emerald-500"
+                  required
+                />
+              </div>
+
+              <div className="flex space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowChangePasswordModal(false)}
+                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-xl text-sm transition font-medium"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 rounded-xl text-sm transition font-medium"
+                >
+                  Simpan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="text-center py-6 text-xs text-slate-500 border-t border-slate-800 mt-12">
