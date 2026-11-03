@@ -4,7 +4,7 @@ import {
   User, ShieldCheck, LogOut, Loader2, Filter, Calendar, ChevronLeft, ChevronRight, Clock, Users, BarChart2, ShieldAlert, Share2, Check, ChevronDown, KeyRound, Lock 
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, push, set, get, remove, child, update } from 'firebase/database';
+import { getDatabase, ref, push, set, get, remove, child } from 'firebase/database';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
 
 // ==========================================
@@ -136,7 +136,6 @@ export default function App() {
       setUser(usernameInput);
       localStorage.setItem('rohingya_user', usernameInput);
       setErrorMsg('');
-      setErrorMsg('');
     } else {
       setErrorMsg('Password salah!');
     }
@@ -159,7 +158,6 @@ export default function App() {
       return;
     }
 
-    // Anggota biasa hanya bisa ganti password sendiri, Admin bisa ganti siapa saja
     const targetUser = isAdmin ? selectedTargetUser : user;
     if (!targetUser) return;
 
