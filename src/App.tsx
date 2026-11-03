@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Wallet, PlusCircle, Trash2, 
-  User, ShieldCheck, LogOut, Loader2, Filter, Calendar, ChevronLeft, ChevronRight, Clock, Users, BarChart2, ShieldAlert 
+  User, ShieldCheck, LogOut, Loader2, Filter, Calendar, ChevronLeft, ChevronRight, Clock, Users, BarChart2, ShieldAlert, Share2, Check 
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, push, set, get, remove, child } from 'firebase/database';
@@ -31,6 +31,7 @@ export default function App() {
   const [logs, setLogs] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [copiedWA, setCopiedWA] = useState(false);
 
   // Filter State
   const [filterJenis, setFilterJenis] = useState('Semua');
@@ -237,6 +238,48 @@ export default function App() {
 
   const userNetLoan = userLoanPinjam - userLoanKembali;
 
+  // Fungsi untuk menyalin format Laporan WhatsApp
+  const handleCopyWAFunctional = () => {
+    const todayStr = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+    
+    // Rangkum rekap loan anggota
+    let loanSummaryText = "";
+    ANGGOTA_LIST.forEach(nama => {
+      const pinjam = transactions
+        .filter(t => t.jenis === 'Loan' && t.anggotaLoan === nama && t.aksiLoan === 'Peminjaman')
+        .reduce((acc, curr) => acc + curr.jumlah, 0);
+      const kembali = transactions
+        .filter(t => t.jenis === 'Loan' && t.anggotaLoan === nama && t.aksiLoan === 'Pengembalian')
+        .reduce((acc, curr) => acc + curr.jumlah, 0);
+      const sisa = pinjam - kembali;
+      
+      if (sisa > 0) {
+        loanSummaryText += `• ${nama}: *Rp ${sisa.toLocaleString()}*\n`;
+      } else {
+        loanSummaryText += `• ${nama}: Lunas\n`;
+      }
+    });
+
+    const waText = `📊 *LAPORAN KEUANGAN KELOMPOK ROHINGYA 5.0*
+📅 Per Tanggal: ${todayStr}
+
+💰 *RINGKASAN KAS*
+🔹 Saldo Akhir Kas: *Rp ${saldoUtama.toLocaleString()}*
+📥 Total Inbound (Masuk): Rp ${totalInbound.toLocaleString()}
+📤 Total Outbound (Keluar): Rp ${totalOutbound.toLocaleString()}
+🛒 Total Pengeluaran: Rp ${totalPengeluaran.toLocaleString()}
+🤝 Total Loan Aktif: Rp ${netLoan.toLocaleString()}
+
+👥 *REKAP SISA LOAN ANGGOTA*
+${loanSummaryText}
+_Laporan ini digenerate otomatis oleh Sistem Rohingya 5.0_ 🤖✨`;
+
+    navigator.clipboard.writeText(waText).then(() => {
+      setCopiedWA(true);
+      setTimeout(() => setCopiedWA(false), 3000);
+    });
+  };
+
   // Menyiapkan Data Grafik Per Transaksi
   const chartData = [...transactions]
     .sort((a, b) => a.createdAt - b.createdAt)
@@ -344,13 +387,25 @@ export default function App() {
                 <p className="text-xs text-slate-400">Login sebagai: <span className="text-emerald-400 font-medium">{user}</span> {isAdmin ? '(Admin)' : ''}</p>
               </div>
             </div>
-            <button 
-              onClick={handleLogout}
-              className="flex items-center space-x-2 bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-xl text-sm transition"
-            >
-              <LogOut size={16} />
-              <span>Keluar</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button 
+                onClick={handleCopyWAFunctional}
+                className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition ${
+                  copiedWA ? 'bg-emerald-600 text-white' : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30'
+                }`}
+                title="Salin laporan siap kirim ke WhatsApp"
+              >
+                {copiedWA ? <Check size={16} /> : <Share2 size={16} />}
+                <span className="hidden sm:inline">{copiedWA ? 'Berhasil Disalin!' : 'Salin Laporan WA'}</span>
+              </button>
+              <button 
+                onClick={handleLogout}
+                className="flex items-center space-x-2 bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-xl text-sm transition"
+              >
+                <LogOut size={16} />
+                <span>Keluar</span>
+              </button>
+            </div>
           </div>
         </header>
 
@@ -386,7 +441,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Grafik Statistik Keuangan Per Transaksi (Anti-Geter) */}
+          {/* Grafik Statistik Keuangan Per Transaksi */}
           <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
             <h2 className="text-lg font-bold text-white mb-4 flex items-center space-x-2">
               <BarChart2 size={20} className="text-emerald-400" />
